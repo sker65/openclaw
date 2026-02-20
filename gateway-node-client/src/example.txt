@@ -1,0 +1,185 @@
+import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+type JwtPayload = {
+	sub: string;
+	iat: number;
+	exp: number;
+	email?: string;
+};
+
+const allowedOrigins = [
+	"https://octoclaw.ai",
+	"https://www.octoclaw.ai",
+	"https://octoclaw.lovable.app",
+	"https://preview--octoclaw.lovable.app",
+];
+
+function getCorsHeaders(req: Request) {
+	const origin = req.headers.get("origin") ?? "";
+	const allowOrigin = allowedOrigins.includes(origin)
+		? origin
+		: allowedOrigins[0];
+
+	return {
+		"Access-Control-Allow-Origin": allowOrigin,
+		"Access-Control-Allow-Credentials": "true",
+		"Access-Control-Allow-Headers":
+			"authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+		"Access-Control-Allow-Methods": "POST, OPTIONS",
+		Vary: "Origin",
+	};
+}
+
+function base64UrlEncode(input: Uint8Array): string {
+	let str = "";
+	for (const ch of input) str += String.fromCharCode(ch);
+	const b64 = btoa(str);
+	return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlEncodeJson(obj: unknown): string {
+	const json = JSON.stringify(obj);
+	return base64UrlEncode(new TextEncoder().encode(json));
+}
+
+async function signHmacSha256(secret: string, data: string): Promise<string> {
+	const key = await crypto.subtle.importKey(
+		"raw",
+		new TextEncoder().encode(secret),
+		{ name: "HMAC", hash: "SHA-256" },
+		false,
+		["sign"],
+	);
+
+	const sig = await crypto.subtle.sign(
+		"HMAC",
+		key,
+		new TextEncoder().encode(data),
+	);
+	return base64UrlEncode(new Uint8Array(sig));
+}
+
+async function createJwt(payload: JwtPayload, secret: string): Promise<string> {
+	const header = { alg: "HS256", typ: "JWT" };
+	const encHeader = base64UrlEncodeJson(header);
+	const encPayload = base64UrlEncodeJson(payload);
+	const toSign = `${encHeader}.${encPayload}`;
+	const sig = await signHmacSha256(secret, toSign);
+	return `${toSign}.${sig}`;
+}
+
+serve(async (req) => {
+	const corsHeaders = getCorsHeaders(req);
+
+	if (req.method === "OPTIONS") {
+		return new Response(null, { headers: corsHeaders });
+	}
+
+	if (req.method !== "POST") {
+		return new Response(JSON.stringify({ error: "Method not allowed" }), {
+			headers: { ...corsHeaders, "Content-Type": "application/json" },
+			status: 405,
+		});
+	}
+
+	const jwtSecret = Deno.env.get("OCTOCLAW_SESSION_JWT_SECRET");
+	if (!jwtSecret) {
+		return new Response(
+			JSON.stringify({ error: "OCTOCLAW_SESSION_JWT_SECRET is not set" }),
+			{
+				headers: { ...corsHeaders, "Content-Type": "application/json" },
+				status: 500,
+			},
+		);
+	}
+
+	const authHeader = req.headers.get("Authorization");
+	if (!authHeader) {
+		const cookie = [
+			"octoclaw_session=",
+			"Path=/",
+			"Domain=.octoclaw.ai",
+			"Max-Age=0",
+			"Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+			"HttpOnly",
+			"Secure",
+			"SameSite=Lax",
+		].join("; ");
+
+		return new Response(JSON.stringify({ ok: true }), {
+			headers: {
+				...corsHeaders,
+				"Content-Type": "application/json",
+				"Set-Cookie": cookie,
+			},
+			status: 200,
+		});
+	}
+
+	const token = authHeader.replace("Bearer ", "");
+
+	const supabaseClient = createClient(
+		Deno.env.get("SUPABASE_URL") ?? "",
+		Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+		{ auth: { persistSession: false } },
+	);
+
+	try {
+		const { data: userData, error: userError } =
+			await supabaseClient.auth.getUser(token);
+		if (userError) {
+			return new Response(
+				JSON.stringify({ error: `Authentication error: ${userError.message}` }),
+				{
+					headers: { ...corsHeaders, "Content-Type": "application/json" },
+					status: 401,
+				},
+			);
+		}
+
+		const user = userData.user;
+		if (!user?.id) {
+			return new Response(JSON.stringify({ error: "User not authenticated" }), {
+				headers: { ...corsHeaders, "Content-Type": "application/json" },
+				status: 401,
+			});
+		}
+
+		const now = Math.floor(Date.now() / 1000);
+		const maxAgeSeconds = 60 * 60 * 24 * 1;
+		const payload: JwtPayload = {
+			sub: user.id,
+			email: user.email ?? undefined,
+			iat: now,
+			exp: now + maxAgeSeconds,
+		};
+
+		const jwt = await createJwt(payload, jwtSecret);
+
+		const cookie = [
+			`octoclaw_session=${jwt}`,
+			"Path=/",
+			"Domain=.octoclaw.ai",
+			`Max-Age=${maxAgeSeconds}`,
+			"HttpOnly",
+			"Secure",
+			"SameSite=Lax",
+		].join("; ");
+
+		return new Response(JSON.stringify({ ok: true }), {
+			headers: {
+				...corsHeaders,
+				"Content-Type": "application/json",
+				"Set-Cookie": cookie,
+			},
+			status: 200,
+		});
+	} catch (error) {
+		const msg = error instanceof Error ? error.message : String(error);
+		return new Response(JSON.stringify({ error: msg }), {
+			headers: { ...corsHeaders, "Content-Type": "application/json" },
+			status: 500,
+		});
+	}
+});

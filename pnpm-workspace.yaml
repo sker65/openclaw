@@ -1,6 +1,7 @@
 packages:
   - .
   - ui
+  - gateway-node-client
   - packages/*
   - extensions/*
 

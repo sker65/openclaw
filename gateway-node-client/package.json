@@ -1,0 +1,35 @@
+{
+  "name": "@openclaw/gateway-node-client",
+  "version": "0.0.0",
+  "description": "Standalone Node.js WebSocket client for the OpenClaw gateway control protocol",
+  "license": "MIT",
+  "files": [
+    "dist/"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "config:apply": "tsx src/config-apply.ts",
+    "config:get": "tsx src/config-get.ts",
+    "config:patch": "tsx src/config-patch.ts",
+    "config:schema": "tsx src/config-schema.ts",
+    "config:set": "tsx src/config-set.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "tsx": "^4.20.5",
+    "typescript": "^5.8.2"
+  }
+}

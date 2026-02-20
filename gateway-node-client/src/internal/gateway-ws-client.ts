@@ -89,6 +89,7 @@ export type GatewayWsClientOptions = {
   mode?: GatewayClientMode;
   role?: string;
   scopes?: string[];
+  caps?: string[];
   deviceIdentity?: DeviceIdentity | null;
   minProtocol?: number;
   maxProtocol?: number;
@@ -249,6 +250,7 @@ export class GatewayWsClient {
 
     const role = this.opts.role ?? "operator";
     const scopes = this.opts.scopes ?? ["operator.read"];
+    const caps = this.opts.caps ?? [];
 
     const authToken = this.opts.token;
     const auth =
@@ -294,7 +296,7 @@ export class GatewayWsClient {
         mode: this.opts.mode ?? "backend",
         instanceId: this.opts.instanceId,
       },
-      caps: [],
+      caps,
       role,
       scopes,
       device,
